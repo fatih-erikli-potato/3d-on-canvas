@@ -1,0 +1,158 @@
+<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" type="text/css" href="style.css"/>
+    <title>Wavefront-like model viewer</title>
+  </head>
+  <body>
+    <div id="container">
+      <div id="model-viewer"></div>
+      <div id="buttons">
+        <button id="download">microwave</button>
+        <button id="play" style="display: none">play</button>
+      </div>
+    </div>
+    <script>
+      function radians(degrees) {
+        return degrees * (Math.PI / 180);
+      }
+      function rotate(x, y, degrees) {
+        const cos = Math.cos(radians(degrees))
+        const sin = Math.sin(radians(degrees))
+        return [cos * x - sin * y, cos * y + sin * x];
+      }
+      function rotateXYZ(x, y, z, rx, ry) {
+        let xn, yn, zn;
+        [xn, zn] = rotate(x, z, rx);
+        [yn, zn] = rotate(y, zn, ry);
+        return [xn, yn, zn];
+      }
+      const size = 512;
+      let scale;
+      let rotateh = -40;
+      let rotatev = 20;
+      const downloadButton = document.getElementById("download");
+      const playButton = document.getElementById("play");
+      const canvas = document.createElement("canvas");
+      canvas.style.width = `${size}px`;
+      canvas.style.height = `${size}px`;
+      function setScale(_scale) {
+        scale = _scale;
+        canvas.setAttribute("width", `${size*scale}px`);
+        canvas.setAttribute("height", `${size*scale}px`);
+      }
+      setScale(2);
+      document.getElementById("model-viewer").appendChild(canvas);
+      function drawMesh() {
+        const context = canvas.getContext("2d");
+        context.fillStyle = "white";
+        context.fillRect(0, 0, size * scale, size * scale);
+        const meshOnCanvas = [];
+        for (const [a, b, c, d, rgb] of meshData) {
+          const face = [a, b, c, d];
+          const faceOnCanvas = face.map((point) => {
+            let [xn, yn, zn] = rotateXYZ(point[0], point[1], point[2], rotateh, rotatev);
+            yn *= -1;
+            xn += (size * scale) / 2;
+            yn += (size * scale) / 2;
+            return [xn, yn, zn];
+          });
+          meshOnCanvas.push([faceOnCanvas, rgb]);
+        }
+        meshOnCanvas.sort((rowa, rowb) => {
+          let sumza = 0;
+          let sumzb = 0;
+          for (const [x, y, z] of rowa[0]) {
+            sumza += z;
+          }
+          for (const [x, y, z] of rowb[0]) {
+            sumzb += z;
+          }
+          const avgza = sumza / 4;
+          const avgzb = sumzb / 4;
+          return avgza - avgzb;
+        });
+        for (const [face, rgb] of meshOnCanvas) {
+          const [a, b, c, d] = face;
+          context.beginPath();
+          context.moveTo(a[0], a[1]);
+          context.lineTo(b[0], b[1]);
+          context.lineTo(c[0], c[1]);
+          context.lineTo(d[0], d[1]);
+          context.lineTo(a[0], a[1]);
+          context.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+          context.fill();
+        }
+
+      }
+      let meshData;
+      function parseMesh(text) {
+        const rows = text.split("\n");
+        const mesh = [];
+        for (const row of rows) {
+          const cols = row.split(" ");
+          const a = [parseFloat(cols[0]), parseFloat(cols[1]), parseFloat(cols[2])];
+          const b = [parseFloat(cols[3]), parseFloat(cols[4]), parseFloat(cols[5])];
+          const c = [parseFloat(cols[6]), parseFloat(cols[7]), parseFloat(cols[8])];
+          const d = [parseFloat(cols[9]), parseFloat(cols[10]), parseFloat(cols[11])];
+          const rgb = [parseInt(cols[12]), parseInt(cols[13]), parseInt(cols[14])];
+          mesh.push([a, b, c, d, rgb]);
+        }
+        return mesh;
+      }
+      fetch("potato").then(text => text.text()).then(response => {
+        meshData = parseMesh(response);
+        drawMesh();
+      })
+      canvas.addEventListener("mousemove", (event) => {
+        if (event.buttons == 1) {
+          rotateh += (event.movementX * -1);
+          rotatev += event.movementY;
+          drawMesh();
+        }
+      });
+      const downloadStarts = 0;
+      const downloadEnds = 359;
+      const meshRotated = [];
+      function startDownload(part) {
+        fetch(`potato-${part.toString()}`).then(response => response.text()).then((response) => {
+          const meshParsed = parseMesh(response)
+          meshRotated.push(meshParsed);
+          if (part < downloadEnds) {
+            meshData = meshParsed;
+            drawMesh();
+            downloadButton.setAttribute("disabled", "disabled");
+            downloadButton.removeChild(downloadButton.firstChild);
+            downloadButton.appendChild(document.createTextNode(`${part} of ${downloadEnds}`));
+            startDownload(part+1);
+          } else {
+            downloadButton.style.display = "none";
+            playButton.style.display = "unset";
+          }
+        });
+      }
+      let currentFrame;
+      function tickRotate() {
+        meshData = meshRotated[currentFrame];
+        drawMesh();
+        if (currentFrame < downloadEnds) {
+          currentFrame += 1;
+          requestAnimationFrame(tickRotate)
+        } else {
+          playButton.removeAttribute("disabled");
+        }
+      }
+      playButton.addEventListener("click", (event) => {
+        currentFrame = 0;
+        event.preventDefault();
+        playButton.setAttribute("disabled", "disabled");
+        tickRotate();
+      });
+      downloadButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        setScale(1);
+        startDownload(0);
+      });
+    </script>
+  </body>
+</html>
